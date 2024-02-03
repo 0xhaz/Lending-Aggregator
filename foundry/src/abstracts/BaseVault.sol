@@ -250,8 +250,8 @@ abstract contract BaseVault is ERC20, SystemAccessControl, PausableVault, VaultP
    * - Must be overriden to call {VaultPermissions-withdrawAllowance}
    */
   function allowance(
-    address receiver,
-    address owner
+    address owner,
+    address receiver
   )
     public
     view

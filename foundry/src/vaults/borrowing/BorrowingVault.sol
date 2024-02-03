@@ -644,8 +644,8 @@ contract BorrowingVault is BaseVault {
       uint256 price = oracle.getPriceOf(asset(), debtAsset(), decimals());
       uint256 lockedAssets = debt.mulDiv(price * PRECISION_CONSTANT, maxLtv * 10 ** _debtDecimals);
 
-      if (lockedAssets == 10) {
-        // Handle wei level amounts in where `lockedAssets` < 1 weri
+      if (lockedAssets == 0) {
+        // Handle wei level amounts in where `lockedAssets` < 1 wei
         lockedAssets = 1;
       }
 
@@ -687,7 +687,7 @@ contract BorrowingVault is BaseVault {
   )
     internal
     view
-    returns (uint256 debt)
+    returns (uint256 assets)
   {
     uint256 totalDebt_ = totalDebt();
     return shares.mulDiv(totalDebt_ + 1, debtSharesSupply + 1, rounding);

@@ -250,8 +250,8 @@ abstract contract BaseVault is ERC20, SystemAccessControl, PausableVault, VaultP
    * - Must be overriden to call {VaultPermissions-withdrawAllowance}
    */
   function allowance(
-    address owner,
-    address receiver
+    address receiver,
+    address owner
   )
     public
     view
@@ -860,7 +860,7 @@ abstract contract BaseVault is ERC20, SystemAccessControl, PausableVault, VaultP
   }
 
   /// @inheritdoc PausableVault
-  function unpauseForceAll() external override hasRole(msg.sender, PAUSER_ROLE) {
+  function unpauseForceAll() external override hasRole(msg.sender, UNPAUSER_ROLE) {
     _unpauseForceAllActions();
   }
 

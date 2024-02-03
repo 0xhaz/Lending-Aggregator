@@ -32,7 +32,7 @@ contract BorrowingVault is BaseVault {
 
   /////////////////// CUSTOM ERRORS /////////////////////
   error BorrowingVault__borrow_invalidInput();
-  error BorrowingVault__borow_moreThanAllowed();
+  error BorrowingVault__borrow_moreThanAllowed();
   error BorrowingVault__payback_invalidInput();
   error BorrowingVault__beforeTokenTransfer_moreThanMax();
   error BorrowingVault__liquidate_invalidInput();
@@ -234,9 +234,9 @@ contract BorrowingVault is BaseVault {
    * - Must burn at least `minDebtShares` when calling `payback()`
    */
   function payback(uint256 debt, address owner, uint256 minDebtShares) public returns (uint256) {
-    uint256 burnedShares = payback(debt, owner);
-    if (burnedShares < minDebtShares) revert BorrowingVault__payback_slippageTooHigh();
-    return burnedShares;
+    uint256 burnedDebtShares = payback(debt, owner);
+    if (burnedDebtShares < minDebtShares) revert BorrowingVault__payback_slippageTooHigh();
+    return burnedDebtShares;
   }
 
   /// @inheritdoc BaseVault
@@ -764,7 +764,7 @@ contract BorrowingVault is BaseVault {
       revert BorrowingVault__borrow_invalidInput();
     }
 
-    if (debt > maxBorrow(owner)) revert BorrowingVault__borow_moreThanAllowed();
+    if (debt > maxBorrow(owner)) revert BorrowingVault__borrow_moreThanAllowed();
 
     if (caller != owner) {
       _spendBorrowAllowance(owner, caller, receiver, debt);

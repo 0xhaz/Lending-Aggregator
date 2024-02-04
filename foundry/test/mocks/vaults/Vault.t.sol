@@ -5,11 +5,11 @@ import "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockingSetup} from "../MockingSetup.sol";
 import {MockRoutines} from "../MockRoutines.sol";
-import {MockOracle} from "../../src/mocks/MockOracle.sol";
-import {IVault} from "../../src/interfaces/IVault.sol";
-import {ILendingProvider} from "../../src/interfaces/ILendingProvider.sol";
-import {BorrowingVault} from "../../src/vaults/borrowing/BorrowingVault.sol";
-import {BaseVault} from "../../src/abstracts/BaseVault.sol";
+import {MockOracle} from "../../../src/mocks/MockOracle.sol";
+import {IVault} from "../../../src/interfaces/IVault.sol";
+import {ILendingProvider} from "../../../src/interfaces/ILendingProvider.sol";
+import {BorrowingVault} from "../../../src/vaults/borrowing/BorrowingVault.sol";
+import {BaseVault} from "../../../src/abstracts/BaseVault.sol";
 
 contract VaultUnitTest is MockingSetup, MockRoutines {
   event MinAmountChanged(uint256 newMinAmount);

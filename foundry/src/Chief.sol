@@ -80,13 +80,13 @@ contract Chief is CoreRoles, AccessControl, IChief {
   // @dev Custom Errors
   error Chief__checkInput_zeroAddress();
   error Chief__setVaultStatus_noStatusChange();
-  error Chief__allowFlasher_notAllowChange();
+  error Chief__allowFlasher_noAllowChange();
   error Chief__allowVaultFactory_noAllowChange();
   error Chief__deployVault_factoryNotAllowed();
   error Chief__deployVault_missingRole(address account, bytes32 role);
   error Chief__onlyTimelock_callerIsNotTimelock();
   error Chief__setSafetyRating_notActiveVault();
-  error Chief__checkRatingVault_notInRange();
+  error Chief__checkRatingValue_notInRange();
   error Chief__allowSwapper_noAllowChange();
 
   /**
@@ -237,7 +237,7 @@ contract Chief is CoreRoles, AccessControl, IChief {
    */
   function allowFlasher(address flasher, bool allowed) external onlyTimelock {
     _checkInputIsNotZeroAddress(flasher);
-    if (allowedFlasher[flasher] == allowed) revert Chief__allowFlasher_notAllowChange();
+    if (allowedFlasher[flasher] == allowed) revert Chief__allowFlasher_noAllowChange();
 
     allowedFlasher[flasher] = allowed;
 
@@ -391,7 +391,7 @@ contract Chief is CoreRoles, AccessControl, IChief {
    * @param rating value to verify is in the accepted range
    */
   function _checkRatingValue(uint256 rating) internal pure {
-    if (rating == 0 || rating > 100) revert Chief__checkRatingVault_notInRange();
+    if (rating == 0 || rating > 100) revert Chief__checkRatingValue_notInRange();
   }
 
   /**
@@ -401,7 +401,7 @@ contract Chief is CoreRoles, AccessControl, IChief {
    */
   function _changePauseState(IPausableVault[] calldata vaults, bytes memory data) internal {
     uint256 alength = vaults.length;
-    for (uint256 i = 0; i < alength; i++) {
+    for (uint256 i; i < alength;) {
       address(vaults[i]).functionCall(data, "Chief::_changePauseState: call failed");
       unchecked {
         ++i;

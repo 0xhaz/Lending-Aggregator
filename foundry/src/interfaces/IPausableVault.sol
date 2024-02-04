@@ -26,13 +26,13 @@ interface IPausableVault {
    * @param account who called the unpause
    * @param action which action is unpaused
    */
-  event UnPaused(address account, VaultActions action);
+  event Unpaused(address account, VaultActions action);
 
   /**
    * @dev Emitted when forced pause all `VaultAction` triggered by `account`
    * @param account who called all pause
    */
-  event PauseForceAll(address account);
+  event PausedForceAll(address account);
 
   /**
    * @dev Emit when forced pause is lifted to all `VaultAction` triggered by `account`

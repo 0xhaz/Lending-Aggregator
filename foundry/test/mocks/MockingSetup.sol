@@ -6,11 +6,11 @@ import {Test} from "forge-std/Test.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimeLockController.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {MockERC20} from "../src/mocks/MockERC20.sol";
+import {MockERC20} from "../../src/mocks/MockERC20.sol";
 import {LibSigUtils} from "../../src/libraries/LibSigUtils.sol";
 import {BorrowingVault} from "../../src/vaults/borrowing/BorrowingVault.sol";
 import {YieldVault} from "../../src/vaults/yields/YieldVault.sol";
-import {MockOracle} from "../src/mocks/MockOracle.sol";
+import {MockOracle} from "../../src/mocks/MockOracle.sol";
 import {MockProvider} from "../../src/mocks/MockProvider.sol";
 import {Chief} from "../../src/Chief.sol";
 import {IVault} from "../../src/interfaces/IVault.sol";
@@ -145,7 +145,6 @@ contract MockingSetup is CoreRoles, Test {
     address vault_
   )
     internal
-    view
     returns (uint256 deadline, uint8 v, bytes32 r, bytes32 s)
   {
     bytes32 structHash = LibSigUtils.getStructHashBorrow(permit);
@@ -166,7 +165,6 @@ contract MockingSetup is CoreRoles, Test {
     address vault_
   )
     internal
-    view
     returns (uint256 deadline, uint8 v, bytes32 r, bytes32 s)
   {
     bytes32 digest = LibSigUtils.getHashTypedDataV4Digest(

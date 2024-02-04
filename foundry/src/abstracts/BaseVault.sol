@@ -273,7 +273,7 @@ abstract contract BaseVault is ERC20, SystemAccessControl, PausableVault, VaultP
    */
   function approve(address receiver, uint256 shares) public override(ERC20, IERC20) returns (bool) {
     /// @dev operator = receiver and owner = msg.sender
-    _setWithdrawAllowance(msg.sender, receiver, receiver, convertToShares(shares));
+    _setWithdrawAllowance(msg.sender, receiver, receiver, convertToAssets(shares));
     emit Approval(msg.sender, receiver, shares);
     return true;
   }
@@ -870,7 +870,12 @@ abstract contract BaseVault is ERC20, SystemAccessControl, PausableVault, VaultP
   }
 
   /// @inheritdoc PausableVault
-  function unpause(VaultActions action) external virtual override hasRole(msg.sender, PAUSER_ROLE) {
+  function unpause(VaultActions action)
+    external
+    virtual
+    override
+    hasRole(msg.sender, UNPAUSER_ROLE)
+  {
     _unpause(action);
   }
 

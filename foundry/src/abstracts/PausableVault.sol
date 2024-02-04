@@ -86,7 +86,7 @@ abstract contract PausableVault is IPausableVault {
    */
   function _unpause(VaultActions action) internal whenPaused(action) {
     _actionsPaused[action] = false;
-    emit UnPaused(msg.sender, action);
+    emit Unpaused(msg.sender, action);
   }
 
   /**
@@ -97,7 +97,7 @@ abstract contract PausableVault is IPausableVault {
     _actionsPaused[VaultActions.Withdraw] = true;
     _actionsPaused[VaultActions.Borrow] = true;
     _actionsPaused[VaultActions.Payback] = true;
-    emit PauseForceAll(msg.sender);
+    emit PausedForceAll(msg.sender);
   }
 
   /**

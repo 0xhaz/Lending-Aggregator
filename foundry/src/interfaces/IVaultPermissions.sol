@@ -28,7 +28,7 @@ interface IVaultPermissions {
 
   /// @dev Based on {IERC20Permit-DOMAIN_SEPARATOR}
   // solhint-disable-next-line func-name-mixedcase
-  function DOMAIN_SEPARATOR() external view returns (bytes32);
+  function DOMAIN_SEPARATOR() external returns (bytes32);
 
   /**
    * @notice Returns the current amount of withdraw allowance for `owner` to `receiver`

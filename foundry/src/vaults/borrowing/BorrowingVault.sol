@@ -502,7 +502,7 @@ contract BorrowingVault is BaseVault {
    * - Must be greater than `maxLtv` and non-zero
    */
   function setLiqRatio(uint256 liqRatio_) external onlyTimelock {
-    if (liqRatio_ < 2e16 || liqRatio_ >= PRECISION_CONSTANT || liqRatio_ <= maxLtv) {
+    if (liqRatio_ <= maxLtv || liqRatio_ < 2e16 || liqRatio_ >= PRECISION_CONSTANT) {
       revert BaseVault__setter_invalidInput();
     }
     liqRatio = liqRatio_;

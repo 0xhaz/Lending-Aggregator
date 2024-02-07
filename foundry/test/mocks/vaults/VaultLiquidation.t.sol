@@ -203,4 +203,147 @@ contract VaultLiquidationUnitTests is MockingSetup, MockRoutines {
     assertEq(vault.balanceOf(TREASURY), 0);
     assertEq(vault.balanceOfDebt(TREASURY), 0);
   }
+
+  function test_liquidateOnlyHealthyUsers() public {
+    uint256 amount = 1 ether;
+    uint256 borrowAmount = 1000e18;
+
+    do_depositAndBorrow(amount, borrowAmount, vault, ALICE);
+    do_depositAndBorrow(amount, borrowAmount, vault, BOB);
+    do_depositAndBorrow(amount, borrowAmount, vault, CHARLIE);
+
+    address[] memory users = new address[](4);
+    users[0] = ALICE;
+    users[1] = BOB;
+    users[2] = CHARLIE;
+
+    // do not specify a liquidation close factor
+    uint256[] memory liqCloseFactors = new uint256[](users.length);
+    liqCloseFactors[0] = 0;
+    liqCloseFactors[1] = 0;
+    liqCloseFactors[2] = 0;
+
+    vm.expectRevert(LiquidationManager.LiquidationManager__liquidate_noUsersToLiquidate.selector);
+    vm.startPrank(address(KEEPER));
+    liquidationManager.liquidate(users, liqCloseFactors, vault, 0, flasher, swapper);
+    vm.stopPrank();
+  }
+
+  function test_liquidateOnlyOneUserLiquidatable(uint256 borrowAmount) public {
+    uint256 currentPrice = oracle.getPriceOf(debtAsset, collateralAsset, 18);
+    uint256 minAmount = (vault.minAmount() * currentPrice) / 1e18;
+
+    vm.assume(borrowAmount > minAmount && borrowAmount < USD_PER_ETH_PRICE);
+
+    uint256 maxltv = vault.maxLtv();
+    uint256 unsafeAmount = (borrowAmount * 105 * 1e36) / (currentPrice * maxltv * 100);
+
+    do_depositAndBorrow(unsafeAmount, borrowAmount, vault, ALICE);
+    do_depositAndBorrow(unsafeAmount * 10, borrowAmount, vault, BOB);
+    do_depositAndBorrow(unsafeAmount * 10, borrowAmount, vault, CHARLIE);
+
+    // Simulate 25% price drop
+    // enough for user to be liquidated
+    // liquidation is still profitable
+    uint256 liquidationPrice = (currentPrice * 75) / 100; // 25% drop
+    uint256 inversePrice = (1e18 / liquidationPrice) * 1e18; // 25% increase
+
+    mock_getPriceOf(collateralAsset, debtAsset, inversePrice);
+    mock_getPriceOf(debtAsset, collateralAsset, liquidationPrice);
+
+    // check balance of alice
+    assertEq(IERC20(collateralAsset).balanceOf(ALICE), 0);
+    assertEq(IERC20(debtAsset).balanceOf(ALICE), borrowAmount);
+    assertEq(vault.balanceOf(ALICE), unsafeAmount);
+    assertEq(vault.balanceOfDebt(ALICE), borrowAmount);
+
+    // check balance of treasury
+    assertEq(IERC20(collateralAsset).balanceOf(TREASURY), 0);
+    assertEq(IERC20(debtAsset).balanceOf(TREASURY), 0);
+
+    // try liquidate all
+    // only alice should be liquidated
+    address[] memory users = new address[](3);
+    users[0] = ALICE;
+    users[1] = BOB;
+    users[2] = CHARLIE;
+
+    // do not specify a liquidation close factor
+    uint256[] memory liqCloseFactors = new uint256[](users.length);
+    liqCloseFactors[0] = 0;
+    liqCloseFactors[1] = 0;
+    liqCloseFactors[2] = 0;
+
+    vm.startPrank(address(KEEPER));
+    liquidationManager.liquidate(users, liqCloseFactors, vault, borrowAmount, flasher, swapper);
+    vm.stopPrank();
+
+    // check balance of alice
+    assertEq(IERC20(collateralAsset).balanceOf(ALICE), 0);
+    assertEq(IERC20(debtAsset).balanceOf(ALICE), borrowAmount);
+    assertEq(vault.balanceOf(ALICE), 0);
+    assertEq(vault.balanceOfDebt(ALICE), 0);
+
+    // check balance of treasury
+    uint256 collectedAmount = unsafeAmount - (borrowAmount * 1e18 / liquidationPrice);
+
+    assertEq(IERC20(collateralAsset).balanceOf(TREASURY), collectedAmount);
+    assertEq(IERC20(debtAsset).balanceOf(TREASURY), 0);
+  }
+
+  function test_unauthorizedKeeper() public {
+    uint256 amount = 1 ether;
+    uint256 borrowAmount = 1000e18;
+
+    do_depositAndBorrow(amount, borrowAmount, vault, ALICE);
+
+    address[] memory users = new address[](1);
+    users[0] = ALICE;
+    // do not specify a liquidation close factor
+    uint256[] memory liqCloseFactors = new uint256[](users.length);
+    liqCloseFactors[0] = 0;
+
+    vm.expectRevert(LiquidationManager.LiquidationManager__liquidate_notValidExecutor.selector);
+    vm.startPrank(address(CHARLIE));
+    liquidationManager.liquidate(users, liqCloseFactors, vault, 1000e18, flasher, swapper);
+    vm.stopPrank();
+  }
+
+  function test_unauthorizedFlasher() public {
+    uint256 amount = 1 ether;
+    uint256 borrowAmount = 1000e18;
+
+    do_depositAndBorrow(amount, borrowAmount, vault, ALICE);
+
+    address[] memory users = new address[](1);
+    users[0] = ALICE;
+    // do not specify a liquidation close factor
+    uint256[] memory liqCloseFactors = new uint256[](users.length);
+    liqCloseFactors[0] = 0;
+
+    IFlasher invalidFlasher = IFlasher(address(0x0));
+    vm.expectRevert(LiquidationManager.LiquidationManager__liquidate_notValidFlasher.selector);
+    vm.startPrank(address(KEEPER));
+    liquidationManager.liquidate(users, liqCloseFactors, vault, 1000e18, invalidFlasher, swapper);
+    vm.stopPrank();
+  }
+
+  function test_unauthorizedSwapper() public {
+    uint256 amount = 1 ether;
+    uint256 borrowAmount = 1000e18;
+
+    do_depositAndBorrow(amount, borrowAmount, vault, ALICE);
+
+    address[] memory users = new address[](1);
+    users[0] = ALICE;
+    // do not specify a liquidation close factor
+    uint256[] memory liqCloseFactors = new uint256[](users.length);
+    liqCloseFactors[0] = 0;
+
+    ISwapper invalidSwapper = ISwapper(address(0x0));
+    vm.expectRevert(LiquidationManager.LiquidationManager__liquidate_notValidSwapper.selector);
+    vm.startPrank(address(KEEPER));
+    liquidationManager.liquidate(users, liqCloseFactors, vault, 1000e18, flasher, invalidSwapper);
+    vm.stopPrank();
+  }
 }

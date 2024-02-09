@@ -14,9 +14,10 @@ interface IRouter {
     Withdraw,
     Borrow,
     Payback,
+    Flashloan,
     Swap,
     PermitWithdraw,
-    PertmitBorrow,
+    PermitBorrow,
     XTransfer,
     XTransferWithCall,
     DepositETH,
@@ -52,7 +53,7 @@ interface IRouter {
    * @param token address of ERC-20 token to sweep
    * @param receiver address of the receiver to send the funds to
    */
-  function sweepTokens(ERC20 token, address receiver) external;
+  function sweepToken(ERC20 token, address receiver) external;
 
   /**
    * @notice Sweeps accidental ETH transfers to this contract or stuck funds

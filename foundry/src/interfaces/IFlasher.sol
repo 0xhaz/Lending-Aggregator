@@ -25,7 +25,7 @@ interface IFlasher {
    * - MUST implement `_checkAndSetEntryPoint()`
    */
 
-  function initiateFlashLoan(
+  function initiateFlashloan(
     address asset,
     uint256 amount,
     address requestor,

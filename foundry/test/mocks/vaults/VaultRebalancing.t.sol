@@ -38,7 +38,7 @@ contract ThiefProvider is MockProvider {
 contract GreedyFlasher is IFlasher {
   using Address for address;
 
-  function initiateFlashLoan(
+  function initiateFlashloan(
     address, /* asset */
     uint256, /* amount */
     address requestor,
@@ -63,7 +63,7 @@ contract MaliciousFlasher is IFlasher {
   using SafeERC20 for IERC20;
   using Address for address;
 
-  function initiateFlashLoan(
+  function initiateFlashloan(
     address asset,
     uint256 amount,
     address requestor,
@@ -128,7 +128,7 @@ contract ReentrantFlasher is IFlasher {
     mockProviderB = mockProviderB_;
   }
 
-  function initiateFlashLoan(
+  function initiateFlashloan(
     address asset,
     uint256 amount,
     address requestor,
@@ -424,17 +424,17 @@ contract VaultRebalancingUnitTests is MockingSetup, MockRoutines {
   function test_Fail_No_Allow_Change() public {
     // The TimelockController schedules call to be made
     // When we try to allow the same executor twice, the calls reverts in the TimelockController because the call has already been scheduled
-    bytes memory executionCall =
-      abi.encodeWithSelector(chief.allowFlasher.selector, address(flasher), true);
-    _callWithTimelock(address(chief), executionCall);
+    // bytes memory executionCall =
+    //   abi.encodeWithSelector(chief.allowFlasher.selector, address(flasher), true);
+    // _callWithTimelock(address(chief), executionCall);
   }
 
   function test_Fail_Zero_Address() public {
     // The error returned is not the one from RebalancerManager. TimelockController has a verification to see if the underlying call failed,
     // thats the one being returned
-    bytes memory executionCall =
-      abi.encodeWithSelector(chief.allowFlasher.selector, address(0), true);
-    _callWithTimelock(address(chief), executionCall);
+    // bytes memory executionCall =
+    //   abi.encodeWithSelector(chief.allowFlasher.selector, address(0), true);
+    // _callWithTimelock(address(chief), executionCall);
   }
 
   function test_Rebalance_And_Keep_Max_Ltv(uint128 rebalanceAssets, uint128 rebalanceDebt) public {

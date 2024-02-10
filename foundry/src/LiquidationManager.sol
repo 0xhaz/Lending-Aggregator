@@ -205,7 +205,7 @@ contract LiquidationManager is ILiquidationManager, SystemAccessControl {
 
     address debtAsset = vault.debtAsset();
 
-    flasher.initiateFlashLoan(debtAsset, debtAmount, address(this), requestorCall);
+    flasher.initiateFlashloan(debtAsset, debtAmount, address(this), requestorCall);
   }
 
   /**

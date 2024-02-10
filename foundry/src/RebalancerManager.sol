@@ -258,7 +258,7 @@ contract RebalancerManager is IRebalancerManager, SystemAccessControl {
 
     address debtAsset = vault.debtAsset();
 
-    flasher.initiateFlashLoan(debtAsset, debt, address(this), requestorCall);
+    flasher.initiateFlashloan(debtAsset, debt, address(this), requestorCall);
   }
 
   /**

@@ -18,7 +18,7 @@ contract MockFlasher is IFlasher {
   using Address for address;
 
   // @inheritdoc IFlasher
-  function initiateFlashLoan(
+  function initiateFlashloan(
     address asset,
     uint256 amount,
     address requestor,

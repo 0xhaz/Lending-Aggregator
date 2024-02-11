@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+pragma solidity 0.8.15;
+
+/**
+ * @title BaseFlasher
+ * @notice Definees the interface and common functions for all flashloan providers
+ */
+
+import {IFlasher} from "../interfaces/IFlasher.sol";
+import {IRouter} from "../interfaces/IRouter.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+
+abstract contract BaseFlasher is IFlasher {
+  using SafeERC20 for IERC20;
+  using Address for address;
+
+  /////////////////////////////// CUSTOM ERRORS ///////////////////////////////
+  error BaseFlasher__notAuthorized();
+  error BaseFlasher__invalidEntryPoint();
+  error BaseFlasher__invalidFlashloanType();
+  error BaseFlasher__notEmptyEntryPoint();
+  error BaseFlasher__lastActionMustBeSwap();
+
+  /////////////////////////////// STATE VARS ///////////////////////////////
+  string public flasherProviderName;
+  address private immutable _flashloanCallAddr;
+  bytes32 private _entryPoint;
+
+  /////////////////////////////// CONSTRUCTOR ///////////////////////////////
+  /**
+   * @notice Constructor of {BaseFlasher}
+   * @param flasherProviderName_ The name of the flashloan provider
+   * @param flashloanCallAddr_ The address or mapping address of the flashloan provider
+   * is called to initiate the flashloan
+   */
+  constructor(string memory flasherProviderName_, address flashloanCallAddr_) {
+    flasherProviderName = flasherProviderName_;
+    _flashloanCallAddr = flashloanCallAddr_;
+  }
+
+  /////////////////////////////// EXTERNAL FUNCTIONS ///////////////////////////////
+  /// @inheritdoc IFlasher
+  function initiateFlashloan(
+    address asset,
+    uint256 amount,
+    address requestor,
+    bytes memory requestorCall
+  )
+    external
+    virtual
+    override;
+
+  /////////////////////////////// PUBLIC VIEW FUNCTIONS ///////////////////////////////
+  /// @inheritdoc IFlasher
+  function getFlashloanSourceAddr(address) public view virtual override returns (address) {
+    return _flashloanCallAddr;
+  }
+
+  /////////////////////////////// INTERNAL FUNCTIONS ///////////////////////////////
+  /**
+   * @param data bytes representing the encoded flashloan parameters
+   * @dev Check if a flashloan is already in course
+   * If it is, revert. If not, start the execution while preventing a new one
+   */
+  function _checkAndSetEntryPoint(bytes memory data) internal {
+    if (_entryPoint != "") revert BaseFlasher__notEmptyEntryPoint();
+    _entryPoint = keccak256(data);
+  }
+
+  /**
+   * @param data bytes representing the encoded flashloan parameters
+   * @dev Check if the current flashloan is in fact the one that has been initiated previously
+   */
+  function _checkReentryPoint(bytes calldata data)
+    internal
+    view
+    returns (address asset, uint256 amount, address requestor, bytes memory requestorCalldata)
+  {
+    if (_entryPoint == "" || _entryPoint != keccak256(data)) {
+      revert BaseFlasher__invalidEntryPoint();
+    }
+    (asset, amount, requestor, requestorCalldata) =
+      abi.decode(data, (address, uint256, address, bytes));
+  }
+
+  /**
+   * @param asset address of the asset to be borrowed
+   * @param amount to be borrowed
+   * @param fee fee to be paid required by some provider for exeecuting a flashloan
+   * @param requestor address of the contract who called the flasher
+   * @param requestorCalldata bytes representing the encoded flashloan parameters
+   *
+   * @dev Execute the flashloan operation requested and send the amount to payback the flashloan and fee to the provider
+   */
+  function _requestorExecution(
+    address asset,
+    uint256 amount,
+    uint256 fee,
+    address requestor,
+    bytes memory requestorCalldata
+  )
+    internal
+    returns (bool)
+  {
+    if (amount == 0) return false;
+    IERC20(asset).safeTransfer(requestor, amount);
+
+    requestor.functionCall(requestorCalldata);
+
+    // approve flashloan source address to spend to repay flashloan
+    IERC20(asset).forceApprove(getFlashloanSourceAddr(asset), amount + fee);
+
+    // re-init
+    _entryPoint = "";
+    return true;
+  }
+}

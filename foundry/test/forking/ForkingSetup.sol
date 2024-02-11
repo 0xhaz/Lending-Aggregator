@@ -77,7 +77,6 @@ contract ForkingSetup is CoreRoles, Test, ChainlinkFeeds {
     forks[OPTIMISM_DOMAIN] = vm.createFork("optimism");
     forks[ARBITRUM_DOMAIN] = vm.createFork("arbitrum");
     forks[POLYGON_DOMAIN] = vm.createFork("polygon");
-    forks[GNOSIS_DOMAIN] = vm.createFork("gnosis");
 
     Registry memory goerli = Registry({
       weth: 0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6,
@@ -141,15 +140,6 @@ contract ForkingSetup is CoreRoles, Test, ChainlinkFeeds {
       connext: 0x11984dc4465481512eb5b777E44061C158CF2259
     });
     registry[POLYGON_DOMAIN] = polygon;
-
-    Registry memory gnosis = Registry({
-      weth: 0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1,
-      usdc: 0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83,
-      dai: 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d,
-      wmatic: address(0),
-      connext: 0x5bB83e95f63217CDa6aE3D181BA580Ef377D2109
-    });
-    registry[GNOSIS_DOMAIN] = gnosis;
   }
 
   function setUpFork(uint32 domain) public {

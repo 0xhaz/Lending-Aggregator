@@ -441,7 +441,7 @@ abstract contract BaseVaultUpgradeable is
      * the maximum amount withdrawable will be withdrawn and returned from `withdrawChecks`
      */
     (assets_, shares_) = _withdrawChecks(caller, receiver, owner, assets, shares);
-    _withdraw(caller, receiver, assets_, shares_);
+    _withdraw(caller, receiver, owner, assets_, shares_);
   }
 
   /**
@@ -510,6 +510,325 @@ abstract contract BaseVaultUpgradeable is
     }
     if (caller != owner) {
       _spendWithdrawAllowance(owner, caller, receiver, assets_);
+    }
+  }
+
+  ///////////////////////////////  DEBT MANAGEMENT: BASED ON IERC464UPGRADEABLE SEMANTICS  ///////////////////////////////
+  /// @inheritdoc IVaultUpgradeable
+  function debtDecimals() public view virtual override returns (uint8);
+
+  /// @inheritdoc IVaultUpgradeable
+  function debtAsset() public view virtual override returns (address);
+
+  /// @inheritdoc IVaultUpgradeable
+  function balanceOfDebt(address account) external view virtual override returns (uint256 debt);
+
+  /// @inheritdoc IVaultUpgradeable
+  function balanceOfDebtShares(address owner)
+    external
+    view
+    virtual
+    override
+    returns (uint256 debtShares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function totalDebt() public view virtual override returns (uint256);
+
+  /// @inheritdoc IVaultUpgradeable
+  function convertDebtToShares(uint256 debt) public view virtual returns (uint256 shares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function convertToDebt(uint256 shares) public view virtual override returns (uint256 debt);
+
+  /// @inheritdoc IVaultUpgradeable
+  function maxBorrow(address borrower) public view virtual override returns (uint256);
+
+  /// @inheritdoc IVaultUpgradeable
+  function maxPayback(address borrower) public view virtual override returns (uint256);
+
+  /// @inheritdoc IVaultUpgradeable
+  function maxMintDebt(address borrower) public view virtual override returns (uint256);
+
+  /// @inheritdoc IVaultUpgradeable
+  function maxBurnDebt(address borrower) public view virtual override returns (uint256);
+
+  /// @inheritdoc IVaultUpgradeable
+  function previewBorrow(uint256 debt) public view virtual override returns (uint256 shares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function previewMintDebt(uint256 shares) public view virtual override returns (uint256 debt);
+
+  /// @inheritdoc IVaultUpgradeable
+  function previewPayback(uint256 debt) public view virtual override returns (uint256 shares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function previewBurnDebt(uint256 shares) public view virtual override returns (uint256 debt);
+
+  /// @inheritdoc IVaultUpgradeable
+  function borrow(
+    uint256 debt,
+    address receiver,
+    address owner
+  )
+    public
+    virtual
+    returns (uint256 shares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function mintDebt(
+    uint256 shares,
+    address receiver,
+    address owner
+  )
+    public
+    virtual
+    returns (uint256 debt);
+
+  /// @inheritdoc IVaultUpgradeable
+  function payback(uint256 debt, address owner) public virtual returns (uint256 shares);
+
+  /// @inheritdoc IVaultUpgradeable
+  function burnDebt(uint256 shares, address owner) public virtual returns (uint256 debt);
+
+  /**
+   * @notice Returns borrow allowance. See {IVaultPermissions-borrowAllowance}
+   *
+   * @param owner that provides borrow allowance
+   * @param operator who can process borrow allowance on owner's behalf
+   * @param receiver who can spend borrow allowance
+   *
+   * @dev Requirements:
+   * - Must be implemented in a {BorrowingVault}, and revert in {YieldVault}
+   */
+  function borrowAllowance(
+    address owner,
+    address operator,
+    address receiver
+  )
+    public
+    view
+    virtual
+    override
+    returns (uint256)
+  {}
+
+  /**
+   * @notice Increase borrow allowance. See {IVaultPermissions-increaseBorrowAllowance}
+   * @param operator who can process borrow allowance on owner's behalf
+   * @param receiver who can spend borrow allowance
+   *
+   * @dev Requirements:
+   * - Must be implemented in a {BorrowingVault}, and revert in {YieldVault}
+   */
+  function increaseBorrowAllowance(
+    address operator,
+    address receiver,
+    uint256 byAmount
+  )
+    public
+    virtual
+    override
+    returns (bool)
+  {}
+
+  /**
+   * @notice Decrease borrow allowance. See {IVaultPermissions-decreaseBorrowAllowance}
+   * @param operator who can process borrow allowance on owner's behalf
+   * @param receiver who can spend borrow allowance
+   *
+   * @dev Requirements:
+   * - Must be implemented in a {BorrowingVault}, and revert in {YieldVault}
+   */
+  function decreaseBorrowAllowance(
+    address operator,
+    address receiver,
+    uint256 byAmount
+  )
+    public
+    virtual
+    override
+    returns (bool)
+  {}
+
+  /**
+   * @notice Process signed permit for borrow allowance. See {IVaultPermisions-permitBorrow}
+   *
+   * @param owner address who signed this permit
+   * @param receiver address whom spending borrow allowance
+   * @param value amount of borrow allowance
+   * @param deadline timestamp at when this permit expires
+   * @param actionArgsHash keccak256 of the abi.encode(args, action) to be performed in {BaseRouter._internalBundle}
+   * @param v signature value
+   * @param r signature value
+   * @param s signature value
+   *
+   * @dev Requirements:
+   * - Must be implemented in a {BorrowingVault}, and revert in {YieldVault}
+   */
+  function permitBorrow(
+    address owner,
+    address receiver,
+    uint256 value,
+    uint256 deadline,
+    bytes32 actionArgsHash,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+  )
+    public
+    virtual
+    override
+  {}
+
+  ///////////////////////////////  FUJI VAULT FUNCTIONS  ///////////////////////////////
+  /**
+   * @dev Execute an action at provider
+   * @param assets amount handled in this action
+   * @param name string of the method to call
+   * @param provider to whom action is being called
+   */
+  function _executeProviderAction(
+    uint256 assets,
+    string memory name,
+    ILendingProvider provider
+  )
+    internal
+  {
+    bytes memory data = abi.encodeWithSignature(
+      string(abi.encodePacked(name, "(uint256,address)")), assets, address(this)
+    );
+    address(provider).functionDelegateCall(
+      data, string(abi.encodePacked(name, ": delegate call failed"))
+    );
+  }
+
+  /**
+   * @dev Returns balance of `asset` or `debtAsset` of this vault at all
+   * listed providers in `_providers` array
+   *
+   * @param method string method to call : "getDepositBalance" or "getBorrowBalance"
+   */
+  function _checkProvidersBalance(string memory method) internal view returns (uint256 assets) {
+    uint256 len = _providers.length;
+    bytes memory callData = abi.encodeWithSignature(
+      string(abi.encodePacked(method, "(address,address)")), address(this), address(this)
+    );
+    bytes memory returnedBytes;
+    for (uint256 i; i < len;) {
+      returnedBytes = address(_providers[i]).functionStaticCall(callData, ": balance check failed");
+      assets += uint256(bytes32(returnedBytes));
+      unchecked {
+        ++i;
+      }
+    }
+  }
+
+  ///////////////////////////////  GETTER FUNCTIONS  ///////////////////////////////
+  /**
+   * @notice Returns the array of providers of this vault
+   */
+  function getProviders() external view returns (ILendingProvider[] memory list) {
+    list = _providers;
+  }
+
+  ///////////////////////////////  ADMIN SET FUNCTIONS  ///////////////////////////////
+  /// @inheritdoc IVaultUpgradeable
+  function setProviders(ILendingProvider[] memory providers) external onlyTimelock {
+    _setProviders(providers);
+  }
+
+  /// @inheritdoc IVaultUpgradeable
+  function setActiveProvider(ILendingProvider activeProvider_) external override onlyTimelock {
+    _setActiveProvider(activeProvider_);
+  }
+
+  /// @inheritdoc IVaultUpgradeable
+  function setMinAmount(uint256 amount) external override onlyTimelock {
+    minAmount = amount;
+    emit MinAmountChanged(amount);
+  }
+
+  /// @inheritdoc PausableVault
+  function pauseForceAll() external override hasRole(msg.sender, PAUSER_ROLE) {
+    _pauseForceAllActions();
+  }
+
+  /// @inheritdoc PausableVault
+  function unpauseForceAll() external override hasRole(msg.sender, UNPAUSER_ROLE) {
+    _unpauseForceAllActions();
+  }
+
+  /// @inheritdoc PausableVault
+  function pause(VaultActions action) external virtual override hasRole(msg.sender, PAUSER_ROLE) {
+    _pause(action);
+  }
+
+  /// @inheritdoc PausableVault
+  function unpause(VaultActions action)
+    external
+    virtual
+    override
+    hasRole(msg.sender, UNPAUSER_ROLE)
+  {
+    _unpause(action);
+  }
+
+  /**
+   * @dev Set the providers of this vault
+   * Requirements:
+   * - Must be implemented at {BorrowingVault} or {YieldVault} level
+   * - Must inifinite approve ERC20 transfers of `asset` or `debtAsset` accordingly
+   * - Must emit a ProvidersChanged event
+   *
+   * @param providers array of providers to set
+   */
+  function _setProviders(ILendingProvider[] memory providers) internal virtual;
+
+  /**
+   * @dev Set the `activeProvider` of this vault
+   * Requirements:
+   * - Must emit an ActiveProviderChanged event
+   *
+   * @param activeProvider_ to set
+   */
+  function _setActiveProvider(ILendingProvider activeProvider_) internal {
+    // @dev skip validity check when setting it for the first time
+    if (!_isValidProvider(address(activeProvider_)) && address(activeProvider) != address(0)) {
+      revert BaseVault__setter_invalidInput();
+    }
+    activeProvider = activeProvider_;
+    emit ActiveProviderChanged(activeProvider_);
+  }
+
+  /**
+   * @dev Returns true if `provider` is in `_providers` array
+   * @param provider address
+   */
+  function _isValidProvider(address provider) internal view returns (bool check) {
+    uint256 len = _providers.length;
+    for (uint256 i = 0; i < len;) {
+      if (provider == address(_providers[i])) {
+        check = true;
+        break;
+      }
+      unchecked {
+        ++i;
+      }
+    }
+  }
+
+  /**
+   * @dev Check rebalance fee is within 10 basis points
+   * Requirements:
+   * - Must be equal to or less than %0.1 (max 10 basis points) of `amount`
+   *
+   * @param fee amount to be check
+   * @param amount being rebalanced to check against
+   */
+  function _checkRebalanceFee(uint256 fee, uint256 amount) internal pure {
+    uint256 reasonableFee = (amount * 10) / 10000;
+    if (fee > reasonableFee) {
+      revert BaseVault__checkRebalanceFee_excessFee();
     }
   }
 }

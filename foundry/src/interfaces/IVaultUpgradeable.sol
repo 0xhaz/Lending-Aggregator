@@ -69,7 +69,7 @@ interface IVaultUpgradeable is IERC4626Upgradeable {
    * @param from address of the provider from which the assets are taken
    * @param to address of the provider to which the assets are sent
    */
-  event Rebalance(uint256 assets, uint256 debt, address indexed from, address indexed to);
+  event VaultRebalance(uint256 assets, uint256 debt, address indexed from, address indexed to);
 
   /**
    * @dev Emit when the max LTV is changed
@@ -161,7 +161,7 @@ interface IVaultUpgradeable is IERC4626Upgradeable {
    * the "average-user's" price per share, meaning what the avergage user must expect to see when
    * exchanging to and from
    */
-  function convertToDebtShares(uint256 debt) external view returns (uint256 shares);
+  function convertDebtToShares(uint256 debt) external view returns (uint256 shares);
 
   /**
    * @notice Returns the amount of debt assets this vault exchange for the amount

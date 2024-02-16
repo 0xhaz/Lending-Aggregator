@@ -333,4 +333,154 @@ contract ForkingSetup2 is CoreRoles, Test {
     vm.prank(address(timelock));
     target.functionCall(callData);
   }
+
+  function getDepositAndBorrow(
+    address beneficiary,
+    uint256 beneficiaryPrivateKey,
+    uint256 depositAmount,
+    uint256 borrowAmount,
+    address router,
+    address vault
+  )
+    internal
+    returns (IRouter.Action[] memory, bytes[] memory)
+  {
+    IRouter.Action[] memory actions = new IRouter.Action[](3);
+    actions[0] = IRouter.Action.Deposit;
+    actions[1] = IRouter.Action.PermitBorrow;
+    actions[2] = IRouter.Action.Borrow;
+
+    bytes[] memory args = new bytes[](3);
+    args[0] = abi.encode(vault, depositAmount, beneficiary, beneficiary);
+    args[1] = LibSigUtils.getZeroPermitEncodedArgs(vault, beneficiary, beneficiary, borrowAmount);
+    args[2] = abi.encode(vault, borrowAmount, beneficiary, beneficiary);
+
+    bytes32 actionArgsHash = LibSigUtils.getActionArgsHash(actions, args);
+
+    // Replace permit action arguments, now with the signature values
+    args[1] = _buildPermitAsBytes(
+      "BORROW",
+      beneficiary,
+      beneficiaryPrivateKey,
+      router,
+      beneficiary,
+      borrowAmount,
+      0,
+      vault,
+      actionArgsHash
+    );
+
+    return (actions, args);
+  }
+
+  function getPaybackAndWithdraw(
+    address beneficiary,
+    uint256 beneficiaryPrivateKey,
+    uint256 paybackAmount,
+    uint256 withdrawAmount,
+    address router,
+    address vault
+  )
+    internal
+    returns (IRouter.Action[] memory, bytes[] memory)
+  {
+    IRouter.Action[] memory actions = new IRouter.Action[](3);
+    actions[0] = IRouter.Action.Payback;
+    actions[1] = IRouter.Action.PermitWithdraw;
+    actions[2] = IRouter.Action.Withdraw;
+
+    bytes[] memory args = new bytes[](3);
+    args[0] = abi.encode(vault, paybackAmount, beneficiary, beneficiary);
+    args[1] = LibSigUtils.getZeroPermitEncodedArgs(vault, beneficiary, beneficiary, withdrawAmount);
+    args[2] = abi.encode(vault, withdrawAmount, beneficiary, beneficiary);
+
+    bytes32 actionArgsHash = LibSigUtils.getActionArgsHash(actions, args);
+
+    // Replace permit action arguments, now with the signature values
+    args[1] = _buildPermitAsBytes(
+      "WITHDRAW",
+      beneficiary,
+      beneficiaryPrivateKey,
+      router,
+      beneficiary,
+      withdrawAmount,
+      0,
+      vault,
+      actionArgsHash
+    );
+
+    return (actions, args);
+  }
+
+  function _buildPermitAsBytes(
+    string memory action,
+    address owner,
+    uint256 ownerPKey,
+    address operator,
+    address receiver,
+    uint256 amount,
+    uint256 plusNonce,
+    address vault,
+    bytes32 actionArgsHash
+  )
+    internal
+    returns (bytes memory arg)
+  {
+    LibSigUtils.Permit memory permit = LibSigUtils.buildPermitStruct(
+      owner, operator, receiver, amount, plusNonce, vault, actionArgsHash
+    );
+
+    (uint256 deadline, uint8 v, bytes32 r, bytes32 s) =
+      _getPermitArgs(action, permit, ownerPKey, vault);
+
+    arg = abi.encode(vault, owner, receiver, amount, deadline, v, r, s);
+  }
+
+  function _getPermitArgs(
+    string memory action,
+    LibSigUtils.Permit memory permit,
+    uint256 ownerPKey,
+    address vault
+  )
+    internal
+    returns (uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+  {
+    bytes32 structHash = keccak256(abi.encodePacked(action))
+      == keccak256(abi.encodePacked("BORROW"))
+      ? LibSigUtils.getStructHashBorrow(permit)
+      : LibSigUtils.getStructHashWithdraw(permit);
+
+    bytes32 digest =
+      LibSigUtils.getHashTypedDataV4Digest(IVaultPermissions(vault).DOMAIN_SEPARATOR(), structHash);
+
+    (v, r, s) = vm.sign(ownerPKey, digest);
+    deadline = permit.deadline;
+  }
+
+  function areEq(string memory a, string memory b) internal pure returns (bool) {
+    if (bytes(a).length != bytes(b).length) {
+      return false;
+    } else {
+      return keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b));
+    }
+  }
+
+  function tryLoadEnvBool(
+    bool defaultVal,
+    string memory varName
+  )
+    internal
+    virtual
+    returns (bool val)
+  {
+    val = defaultVal;
+
+    if (!val) {
+      try vm.envBool(varName) returns (bool _val) {
+        val = _val;
+      } catch {}
+    }
+
+    if (val) console.log("%s=true", varName);
+  }
 }

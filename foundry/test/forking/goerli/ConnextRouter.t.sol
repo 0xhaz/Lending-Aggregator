@@ -716,13 +716,13 @@ contract ConnextRouterForkingTests is Routines, ForkingSetup {
   function test_Try_Change_XTransfer_Slippage_Without_Permission() public {
     uint256 amount = 1 ether;
     uint256 borrowAmount = 100e6; // 100 USDC
-    uint256 slippage = 0;
+    // uint256 slippage = 0;
     uint256 newSlippage = 3;
-    uint256 slippageThreshold = 5;
+    // uint256 slippageThreshold = 5;
 
-    bytes memory callData = _getDepositAndBorrowCallData(
-      ALICE, ALICE_PK, amount, borrowAmount, address(connextRouter), address(vault)
-    );
+    // bytes memory callData = _getDepositAndBorrowCallData(
+    //   ALICE, ALICE_PK, amount, borrowAmount, address(connextRouter), address(vault)
+    // );
 
     vm.expectEmit(true, true, true, false);
     emit Deposit(address(connextRouter), ALICE, amount, amount);

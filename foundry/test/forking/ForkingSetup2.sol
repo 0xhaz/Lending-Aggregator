@@ -39,6 +39,13 @@ contract ForkingSetup2 is CoreRoles, Test {
     string asset1;
     string asset2;
     address market;
+    string name;
+  }
+
+  struct SimpleMapping {
+    string asset;
+    address market;
+    string name;
   }
 
   struct Vault {
@@ -123,6 +130,15 @@ contract ForkingSetup2 is CoreRoles, Test {
     configJson = vm.readFile(path);
   }
 
+  function setUpNamedFork(string memory chain) public {
+    chainName = chain;
+
+    _createAndSelectFork();
+
+    string memory path = string.concat("deploy-configs/", chainName, ".json");
+    configJson = vm.readFile(path);
+  }
+
   function _createAndSelectFork() internal {
     bool ignoreCacheBlock = tryLoadEnvBool(false, "IGNORE_CACHE_BLOCK");
 
@@ -184,7 +200,7 @@ contract ForkingSetup2 is CoreRoles, Test {
       }
       oracle = new FujiOracle(addrs, feeds, address(chief));
     } else {
-      oracle = IFujiOracle(getAddress("FujiOracle"));
+      oracle = FujiOracle(getAddress("FujiOracle"));
     }
     vm.label(address(oracle), "FujiOracle");
   }
@@ -194,7 +210,7 @@ contract ForkingSetup2 is CoreRoles, Test {
       if (deployImplementation) {
         implementation = address(new BorrowingVaultUpgradeable());
       } else {
-        implementation = getAddress("BorrowingVaultImplementation");
+        implementation = getAddress("BorrowingVaultUpgradeable");
       }
       factory = new BorrowingVaultBeaconFactory(address(chief), implementation);
     } else {
@@ -309,7 +325,7 @@ contract ForkingSetup2 is CoreRoles, Test {
     addr = _getAddress(string.concat("deployments/", chainName, "/", contractName));
   }
 
-  function getAdressAt(
+  function getAddressAt(
     string memory contractName,
     string memory _chainName
   )
@@ -320,7 +336,7 @@ contract ForkingSetup2 is CoreRoles, Test {
     addr = _getAddress(string.concat("deployments/", _chainName, "/", contractName));
   }
 
-  function readAddrFromConfig(string memory key) internal returns (address) {
+  function readAddrFromConfig(string memory key) internal view returns (address) {
     return vm.parseJsonAddress(configJson, string.concat(".", key));
   }
 
@@ -476,8 +492,8 @@ contract ForkingSetup2 is CoreRoles, Test {
     val = defaultVal;
 
     if (!val) {
-      try vm.envBool(varName) returns (bool _val) {
-        val = _val;
+      try vm.envBool(varName) returns (bool val_) {
+        val = val_;
       } catch {}
     }
 

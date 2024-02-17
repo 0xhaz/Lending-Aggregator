@@ -802,8 +802,8 @@ contract BorrowingVaultUpgradeable is BaseVaultUpgradeable {
    */
   function setLtvFactors(uint256 maxLtv_, uint256 liqRatio_) external onlyTimelock {
     if (
-      liqRatio_ <= maxLtv_ || liqRatio_ < 2e16 || liqRatio_ >= PRECISION_CONSTANT || maxLtv_ < 1e16
-        || maxLtv_ >= PRECISION_CONSTANT
+      liqRatio_ <= maxLtv_ || liqRatio_ <= maxLtv || liqRatio_ < 2e16
+        || liqRatio_ >= PRECISION_CONSTANT || maxLtv_ < 1e16 || maxLtv_ >= PRECISION_CONSTANT
     ) {
       revert BaseVault__setter_invalidInput();
     }

@@ -176,7 +176,7 @@ contract BorrowingVaultBeaconFactory is IBeacon, VaultDeployer {
    * - msg.sender must be the timelock of the chief contract
    * - `newImplementation` must be a contract
    */
-  function upgradeTo(address newImplementation) external onlyTimelock {
+  function upgradeTo(address newImplementation) public virtual onlyTimelock {
     _setImplementation(newImplementation);
 
     emit Upgraded(newImplementation);

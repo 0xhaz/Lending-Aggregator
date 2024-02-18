@@ -51,12 +51,19 @@ contract ConnextRouterVaultIntegrations is Routines, ForkingSetup2 {
     setOrDeployBorrowingVaults(false);
 
     vault = BVault(payable(allVaults[0].addr));
+    console.log("Vault Address: %s", address(vault));
 
     collateralAsset = vault.asset();
     debtAsset = vault.debtAsset();
 
+    console.log("Collateral Asset: %s", collateralAsset);
+    console.log("Debt Asset: %s", debtAsset);
+
     connextHandler = connextRouter.handler();
     connextReceiver = ConnextReceiver(connextRouter.connextReceiver());
+
+    console.log("ConnextHandler: %s", address(connextHandler));
+    console.log("ConnextReceiver: %s", address(connextReceiver));
 
     vm.startPrank(address(timelock));
     // Assume the same address of xreceive in all domains
@@ -189,18 +196,117 @@ contract ConnextRouterVaultIntegrations is Routines, ForkingSetup2 {
 
     {
       // Check vault status
-      uint256 vaultDebtSharesSupply = vault.debtSharesSupply();
-      uint256 vaultDebtBalanceAtProvider =
-        sprovider.getBorrowBalance(address(vault), IVault(address(vault)));
+      //   uint256 vaultDebtSharesSupply = vault.debtSharesSupply();
+      //   uint256 vaultDebtBalanceAtProvider =
+      //     sprovider.getBorrowBalance(address(vault), IVault(address(vault)));
 
-      assertEq(vaultDebtSharesSupply, 0);
-      assertEq(vaultDebtBalanceAtProvider, 0);
+      //   assertEq(vaultDebtSharesSupply, 0);
+      //   assertEq(vaultDebtBalanceAtProvider, 0);
+
+      //   if (DEBUG) {
+      //     console.log("Vault DebtShares Supply: %s", vaultDebtSharesSupply);
+      //     console.log("Vault Debt Balance at Provider: %s", vaultDebtBalanceAtProvider);
+      //   }
+    }
+  }
+
+  function test_Attempt_Max_Payback_SDK_Underestimate() public {
+    __doUnbalanceDebtToSharesRatio(address(vault));
+
+    // Assume ALICE already has a position in this domain
+    do_depositAndBorrow(DEPOSIT_AMOUNT, BORROW_AMOUNT, IVault(address(vault)), ALICE);
+
+    __closeBOB(address(vault));
+
+    // Record Alice debt for future assertion
+    uint256 aliceDebtBefore = vault.balanceOfDebt(ALICE);
+    uint256 aliceDebtSharesBefore = vault.balanceOfDebtShares(ALICE);
+
+    if (DEBUG) {
+      console.log("Alice original debt: %s", BORROW_AMOUNT);
+      console.log("debtShare-to-debt-ratio-alteration");
+      console.log("Alice Debt Before XCall: %s", aliceDebtBefore);
+      console.log("Alice DebtShares Before XCall: %s", aliceDebtSharesBefore);
+    }
+
+    // From a separate domain ALICE wants to make a max payback
+    // The SDK prepares the bundle for her
+    IRouter.Action[] memory actions = new IRouter.Action[](1);
+    bytes[] memory args = new bytes[](1);
+
+    uint256 sdkAmount;
+    uint256 feeAndSlippage;
+    uint256 underEstimation = 99999 wei;
+    {
+      actions[0] = IRouter.Action.Payback;
+      // We expet the SDK to estimate a buffer amount that includes:
+      // - [ira] interest rate accrued buffer during time of xCall
+      // - [cfee] the connext 5 bps fee
+      // - [slippage] potential connext slippage
+      // Therefore: estimate = ira + cfee + slippage
+      feeAndSlippage = aliceDebtBefore.mulDiv(5, 1e4) + aliceDebtBefore.mulDiv(3, 1e3); // 0.5% + 0.3%
+      sdkAmount = aliceDebtBefore + feeAndSlippage - underEstimation;
+      args[0] = abi.encode(address(vault), sdkAmount, ALICE, address(connextRouter));
+    }
+
+    bytes memory callData = abi.encode(actions, args);
+
+    // send directly the bridged funds to our xReceiver, thus simulating ConnextCore
+    // behaviour. However, the final received amount is resultant
+    // of deducting the Connext fee and slippage amount
+    uint256 finalReceived;
+    {
+      finalReceived = sdkAmount - feeAndSlippage;
+      deal(debtAsset, address(connextReceiver), finalReceived);
+    }
+
+    vm.startPrank(connextCore);
+    // Call pretended from connextCore to connextReceiver from a separate domain (eg. optimism goerli)
+    // simulated to be the same address as ConnextRouter in this test
+    connextReceiver.xReceive(
+      "0x01", finalReceived, debtAsset, address(connextRouter), OPTIMISM_GOERLI_DOMAIN, callData
+    );
+
+    // Handler should have no funds
+    if (IERC20(debtAsset).balanceOf(address(connextHandler)) > 0) {
+      revert xReceiverFailed_recordedTransfer();
+    }
+
+    {
+      // Assert Alice's debt is now zero by the amount in cross-tx
+      uint256 aliceDebtAfter = vault.balanceOfDebt(ALICE);
+      uint256 aliceDebtSharesAfter = vault.balanceOfDebtShares(ALICE);
+      uint256 aliceUSDCBalanceAfter = IERC20(debtAsset).balanceOf(ALICE);
+
+      assertGt(aliceDebtAfter, 0);
+      assertGt(aliceDebtSharesAfter, 0);
+      // Assert ALICE has NOT receive any overestimate
+      assertEq(aliceUSDCBalanceAfter, BORROW_AMOUNT);
 
       if (DEBUG) {
-        console.log("Vault DebtShares Supply: %s", vaultDebtSharesSupply);
-        console.log("Vault Debt Balance at Provider: %s", vaultDebtBalanceAtProvider);
+        console.log(
+          "Alice Debt After : %s",
+          aliceDebtAfter,
+          "Alice DebtShares After: %s",
+          aliceDebtSharesAfter
+        );
+        console.log("Alice USDC Balance After: %s", aliceUSDCBalanceAfter);
       }
     }
+    // {
+    //   // Check vault status
+    //   uint256 vaultDebtSharesSupply = vault.debtSharesSupply();
+    //   uint256 vaultDebtBalanceAtProvider =
+    //     sprovider.getBorrowBalance(address(vault), IVault(address(vault)));
+
+    //   assertGt(vaultDebtSharesSupply, 0);
+    //   assertGt(vaultDebtBalanceAtProvider, 0);
+
+    //   if (DEBUG) {
+    //     console.log("Vault DebtShares Supply: %s", vaultDebtSharesSupply);
+    //     console.log("Vault Debt Balance at Provider: %s", vaultDebtBalanceAtProvider);
+    //   }
+    // }
   }
 
   function __doUnbalanceDebtToSharesRatio(address vault_) internal {

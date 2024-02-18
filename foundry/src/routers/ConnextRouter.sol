@@ -28,6 +28,9 @@ contract ConnextRouter is BaseRouter, IXReceiver {
   error ConnextRouter__xReceiver_noValueTransferUseXBundle();
   error ConnextRouter__xBundleConnext_notSelfCalled();
   error ConnextRouter__crossTransffer_checkReceiver();
+  error ConnextRouter__xReceiver_noValueTransferUseXbundle();
+  error ConnnextRouter__xBundleConnext_notSelfCalled();
+  error ConnextRouter__crossTransfer_checkReceiver();
 
   ///////////////////////////////// EVENTS /////////////////////////////////
   /**

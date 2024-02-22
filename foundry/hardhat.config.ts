@@ -1,5 +1,5 @@
 import "@nomicfoundation/hardhat-toolbox";
-import "@tenderly/hardhat-tenderly";
+// import "@tenderly/hardhat-tenderly";
 import "hardhat-abi-exporter";
 import "hardhat-preprocessor";
 import "hardhat-deploy";
@@ -12,7 +12,7 @@ const deployerPath = "./deployer.json";
 /**
  * Tasks
  */
-import { mnemonic } from "./hardhat-tasks/getWallet";}
+import { mnemonic } from "./hardhat-tasks/getWallet";
 
 /**
  * Configuration
@@ -25,19 +25,91 @@ const config: HardhatUserConfig = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 200
-          }
-        }
-      }
-    ]
+            runs: 200,
+          },
+        },
+      },
+    ],
   },
   networks: {
     localhost: {
       live: false,
       saveDeployments: true,
-      deploy: [`deploy/networks/${getTestDeployNetwork()}`]
-    }
-  }
+      deploy: [`deploy/networks/${getTestDeployNetwork()}`],
+    },
+    hardhat: {
+      live: false,
+      saveDeployments: true,
+      deploy: [`deploy/networks/${getTestDeployNetwork()}`],
+    },
+    mainnet: {
+      live: true,
+      saveDeployments: true,
+      deploy: ["deploy/networks/mainnet"],
+      url: `{process.env.RPC_MAINNET}`,
+      accounts: process.env.PRIVATE_KEY
+        ? [process.env.PRIVATE_KEY]
+        : { mnemonic: mnemonic(deployerPath) },
+    },
+  },
+  etherscan: {
+    apiKey: {
+      goerli: process.env.ETHERSCAN_API_KEY ?? "",
+    },
+  },
+  preprocess: {
+    eachLine: () => ({
+      transform: (line: string) => {
+        getRemappings().forEach(([find, replace]) => {
+          if (line.match(find)) {
+            line = line.replace(find, replace);
+          }
+        });
+        return line;
+      },
+    }),
+  },
+  paths: {
+    sources: "./src",
+    cache: "./cache_hardhat",
+  },
+  abiExporter: {
+    path: "./abis",
+    runOnCompile: true,
+    clear: true,
+    spacing: 2,
+  },
+  namedAccounts: {
+    deployer: {
+      default: 0,
+    },
+    alice: { default: 1 },
+    bob: { default: 2 },
+    rando: { default: 3 },
+  },
+  typechain: {
+    dontOverrideCompile: true,
+  },
+  // tenderly: {
+  //   project: process.env.TENDERLY_PROJECT || "",
+  //   username: process.env.TENDERLY_USERNAME || "",
+  // },
 };
+
+function getTestDeployNetwork() {
+  if (!process.env.TEST_DEPLOY_NETWORK) {
+    throw "Set TEST_DEPLOY_NETWORK in .env";
+  } else {
+    return process.env.TEST_DEPLOY_NETWORK;
+  }
+}
+
+function getRemappings() {
+  return fs
+    .readFileSync("remappings_hardhat.txt", "utf-8")
+    .split("\n")
+    .filter(Boolean) // remove empty lines
+    .map((line: string) => line.trim().split("="));
+}
 
 export default config;

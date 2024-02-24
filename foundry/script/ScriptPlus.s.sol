@@ -27,3 +27,607 @@ import {ConnextRouter} from "../src/routers/ConnextRouter.sol";
 import {CoreRoles} from "../src/access/CoreRoles.sol";
 import {RebalancerManager} from "../src/RebalancerManager.sol";
 import {FlasherBalancer} from "../src/flashloans/FlasherBalancer.sol";
+import {AaveEModeHelper} from "../src/providers/AaveEModeHelper.sol";
+
+contract ScriptPlus is ScriptUtilities, CoreRoles {
+  using SafeERC20 for IERC20;
+
+  struct PriceFeed {
+    string asset;
+    address chainlink;
+  }
+
+  struct NestedMapping {
+    string asset1;
+    string asset2;
+    address market;
+    string name;
+  }
+
+  struct SimpleMapping {
+    string asset;
+    address market;
+    string name;
+  }
+
+  struct EModeConfigJson {
+    string asset;
+    string debtAsset;
+    uint8 id;
+  }
+
+  struct EModeConfigs {
+    address[] assets;
+    address[] debtAssets;
+    uint8[] ids;
+  }
+
+  struct VaultConfig {
+    string collateral;
+    string debt;
+    uint256 liqRatio;
+    uint256 maxLtv;
+    string name;
+    string[] providers;
+    uint256 rating;
+  }
+
+  struct YieldVaultConfig {
+    string asset;
+    string name;
+    string[] providers;
+    uint256 rating;
+  }
+
+  uint256 private constant MIN_INITIALIZE = 1e6;
+
+  bool UPGRADE_SAFETY_CHECK_BYPASS; // bypass all upgrade safety checks
+  string ETHERSCAN_API_KEY;
+
+  AddrMapper internal mapper;
+  Chief internal chief;
+  TimelockController internal timelock;
+  BorrowingVaultBeaconFactory internal factory;
+  YieldVaultFactory internal yieldFactory;
+  FujiOracle internal oracle;
+  ConnextRouter internal connextRouter;
+  RebalancerManager internal rebalancer;
+  FlasherBalancer internal flasherBalancer;
+
+  AaveEModeHelper internal emode;
+  EModeConfigs private _eModeConfigsToSet;
+
+  address internal implementation;
+  address internal deployer;
+
+  address[] internal timelockTargets;
+  bytes[] internal timelockDatas;
+  uint256[] internal timelockValues;
+  string[] internal chainNames;
+
+  address[] internal approvals;
+  mapping(address => uint256) internal approvalsByToken;
+
+  constructor() {
+    chainNames.push("ethereum");
+    chainNames.push("polygon");
+    chainNames.push("optimism");
+    chainNames.push("arbitrum");
+    chainNames.push("goerli");
+  }
+
+  function setUpOn() internal {
+    if (block.chainid == ETHEREUM_CHAIN_ID) {
+      chainName = "ethereum";
+      ETHERSCAN_API_KEY = tryLoadEnvString("ETHERSCAN_KEY");
+    } else if (block.chainid == OPTIMISM_CHAIN_ID) {
+      chainName = "optimism";
+      ETHERSCAN_API_KEY = tryLoadEnvString("OPTIMISM_ETHERSCAN_KEY");
+    } else if (block.chainid == ARBITRUM_CHAIN_ID) {
+      chainName = "arbitrum";
+      ETHERSCAN_API_KEY = tryLoadEnvString("ARBITRUM_ETHERSCAN_KEY");
+    } else if (block.chainid == POLYGON_CHAIN_ID) {
+      chainName = "polygon";
+      ETHERSCAN_API_KEY = tryLoadEnvString("POLYGON_ETHERSCAN_KEY");
+    } else if (block.chainid == GOERLI_CHAIN_ID) {
+      chainName = "goerli";
+      ETHERSCAN_API_KEY = tryLoadEnvString("ETHERSCAN_KEY");
+    }
+
+    string memory path = string.concat("deploy-configs/", chainName, ".json");
+    configJson = vm.readFile(path);
+
+    uint256 pvk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+    deployer = vm.addr(pvk);
+
+    UPGRADE_SAFETY_CHECK_BYPASS = tryLoadEnvBool(false, "UPGRADE_SAFETY_CHECK_BYPASS");
+  }
+
+  function setOrDeployChief(bool deploy) internal {
+    if (deploy) {
+      chief = new Chief(true, false);
+      saveAddress("Chief", address(chief));
+    } else {
+      chief = Chief(getAddress("Chief"));
+    }
+    timelock = TimelockController(payable(chief.timelock()));
+  }
+
+  function setOrDeployConnextRouter(bool deploy) internal {
+    if (deploy) {
+      address connext = readAddrFromConfig("ConnextCore");
+      address weth = readAddrFromConfig("WETH");
+
+      connextRouter = new ConnextRouter(IWETH9(weth), IConnext(connext), Chief(chief));
+      saveAddress("ConnextRouter", address(connextRouter));
+      saveAddress("ConnextHandler", address(connextRouter.handler()));
+      saveAddress("ConnextReceiver", address(connextRouter.connextReceiver()));
+    } else {
+      connextRouter = ConnextRouter(payable(getAddress("ConnextRouter")));
+    }
+
+    address caller = readAddrFromConfig("FujiRelayer");
+    if (!connextRouter.isAllowedCaller(caller)) {
+      console.log("Allowing caller for ConnextRouter...");
+      bytes memory data = abi.encodeWithSelector(connextRouter.allowCaller.selector, caller, true);
+      callWithTimelock(address(connextRouter), data);
+    }
+  }
+
+  function setOrDeployFujiOracle(bool deploy) internal {
+    bytes memory raw = vm.parseJson(configJson, ".price-feeds");
+    PriceFeed[] memory list = abi.decode(raw, (PriceFeed[]));
+
+    uint256 len = list.length;
+
+    if (deploy) {
+      address[] memory addrs = new address[](len);
+      address[] memory feeds = new address[](len);
+      for (uint256 i; i < len; i++) {
+        addrs[i] = readAddrFromConfig(list[i].asset);
+        feeds[i] = list[i].chainlink;
+      }
+      oracle = new FujiOracle(getAddress("FujiOracle"));
+      address asset;
+      address feed;
+      //   set new feeds
+      for (uint256 i; i < len; i++) {
+        asset = readAddrFromConfig(list[i].asset);
+        feed = list[i].chainlink;
+        if (oracle.usdPriceFeeds(asset) != feed) {
+          console.log(string.concat("Setting price feed for: ", list[i].asset));
+          timelockTargets.push(address(oracle));
+          timelockDatas.push(abi.encodeWithSelector(oracle.setPriceFeed.selector, asset, feed));
+          timelockValues.push(0);
+        }
+      }
+      callBatchWithTimelock();
+    }
+  }
+
+  function setOrDeployBorrowingVaultFactory(bool deployFactory, bool deployImplementation) internal {
+    if (deployFactory) {
+      if (deployImplementation) {
+        implementation = address(new BorrowingVault());
+        saveAddress("BorrowingVaultUpgradeable", implementation);
+        saveStorageLayout("BorrowingVaultUpgradeable");
+      } else {
+        implementation = getAddress("BorrowingVaultUpgradeable");
+      }
+      factory = new BorrowingVaultBeaconFactory(address(chief), implementation);
+      saveAddress("BorrowingVaultBeaconFactory", address(factory));
+    } else {
+      factory = BorrowingVaultBeaconFactory(getAddress("BorrowingVaultBeaconFactory"));
+    }
+
+    if (!chief.allowedVaultFactory(address(factory))) {
+      bytes memory data2 =
+        abi.encodeWithSelector(chief.allowVaultFactory.selector, address(factory), true);
+      callWithTimelock(address(chief), data2);
+    }
+  }
+
+  function setOrDeployYieldVaultFactory(bool deployFactory, bool deployImplementation) internal {
+    if (deployFactory) {
+      if (deployImplementation) {
+        implementation = address(new YieldVault());
+        saveAddress("YieldVaultUpgradeable", implementation);
+      } else {
+        implementation = getAddress("YieldVaultUpgradeable");
+      }
+      yieldFactory = new YieldVaultFactory(address(chief), implementation);
+      saveAddress("YieldVaultBeaconFactory", address(yieldFactory));
+    } else {
+      yieldFactory = YieldVaultFactory(getAddress("YieldVaultBeaconFactory"));
+    }
+
+    if (!chief.allowedVaultFactory(address(yieldFactory))) {
+      bytes memory data2 =
+        abi.encodeWithSelector(chief.allowVaultFactory.selector, address(yieldFactory), true);
+      callWithTimelock(address(chief), data2);
+    }
+  }
+
+  function setOrDeployAddrMapper(bool deploy) internal {
+    if (deploy) {
+      mapper = new AddrMapper(address(chief));
+      saveAddress("AddrMapper", address(mapper));
+    } else {
+      mapper = AddrMapper(getAddress("AddrMapper"));
+    }
+    setSimpleMappings();
+    setNestedMappings();
+
+    callBatchWithTimelock();
+  }
+
+  function setSimpleMappings() internal {
+    bytes memory raw = vm.parseJson(configJson, ".simple-mappings");
+    SimpleMapping[] memory simple = abi.decode(raw, (SimpleMapping[]));
+
+    uint256 len = simple.length;
+    address asset;
+    address market;
+    string memory name;
+    bytes memory data;
+    for (uint256 i; i < len; i++) {
+      asset = readAddrFromConfig(simple[i].asset);
+      market = simple[i].market;
+      name = simple[i].name;
+
+      if (mapper.getAddressMapping(name, asset) != market) {
+        data = abi.encodeWithSelector(mapper.setMapping.selector, name, asset, market);
+        timelockTargets.push(address(mapper));
+        timelockDatas.push(data);
+        timelockValues.push(0);
+      }
+    }
+  }
+
+  function setNestedMappings() internal {
+    bytes memory raw = vm.parseJson(configJson, ".nested-mappings");
+    NestedMapping[] memory nested = abi.decode(raw, (NestedMapping[]));
+
+    uint256 len = nested.length;
+    address asset1;
+    address asset2;
+    address market;
+    string memory name;
+    bytes memory data;
+    for (uint256 i; i < len; i++) {
+      asset1 = readAddrFromConfig(nested[i].asset1);
+      // asset2 could be the zero address when getting mappings for yield vaults
+      asset2 = areEq(nested[i].asset2, "ZERO") ? address(0) : readAddrFromConfig(nested[i].asset2);
+      market = nested[i].market;
+      name = nested[i].name;
+
+      if (mapper.getAddressNestedMapping(name, asset1, asset2) != market) {
+        data =
+          abi.encodeWithSelector(mapper.setNestedMapping.selector, name, asset1, asset2, market);
+        timelockTargets.push(address(mapper));
+        timelockDatas.push(data);
+        timelockValues.push(0);
+      }
+    }
+  }
+
+  function setConnextReceivers() internal {
+    uint256 len = chainNames.length;
+
+    address current = address(connextRouter);
+
+    uint32 domain;
+    address receiver;
+    for (uint256 i; i < len; i++) {
+      domain = getDomainByChainName(chainNames[i]);
+      receiver = getAddressAt("ConnextReceiver", chainNames[i]);
+      if (connextRouter.receiverByDomain(domain) != receiver && current != receiver) {
+        timelockTargets.push(current);
+        timelockDatas.push(
+          abi.encodeWithSelector(connextRouter.setReceiver.selector, domain, receiver)
+        );
+        timelockValues.push(0);
+      }
+    }
+    callBatchWithTimelock();
+  }
+
+  function deployBorrowingVaults() internal {
+    bytes memory raw = vm.parseJson(configJson, ".borrowing-vaults");
+    VaultConfig[] memory vaults = abi.decode(raw, (VaultConfig[]));
+
+    uint256 len = vaults.length;
+    address collateral;
+    address debt;
+    string memory name;
+    uint256 rating;
+    string[] memory providerNames;
+
+    for (uint256 i; i < len; i++) {
+      collateral = readAddrFromConfig(vaults[i].collateral);
+      debt = readAddrFromConfig(vaults[i].debt);
+      name = vaults[i].name;
+      rating = vaults[i].rating;
+      providerNames = vaults[i].providers;
+
+      uint256 providersLen = providerNames.length;
+      ILendingProvider[] memory providers = new ILendingProvider[](providersLen);
+      for (uint256 j; j < providersLen; j++) {
+        providers[j] = ILendingProvider(getAddress(providerNames[j]));
+      }
+
+      try vm.readFile(string.concat("deployments/", chainName, "/", name)) {
+        console.log(string.concat("Skip deploying: ", name));
+      } catch {
+        if (IERC20(collateral).allowance(msg.sender, address(factory)) < MIN_INITIALIZE) {
+          console.log(string.concat("Needs to increase allowance to deploy vault: ", name, " ..."));
+          if (approvalsByToken[collateral] == 0) approvals.push(collateral);
+          approvalsByToken[collateral] += MIN_INITIALIZE;
+        } else {
+          console.log(string.concat("Deploying: ", name, " ..."));
+          uint256 count = factory.vaultsCount(collateral);
+          chief.deployVault(address(factory), abi.encode(collateral, debt, providers), rating);
+          address vault = factory.allVaults(count);
+          saveAddress(name, vault);
+        }
+      }
+    }
+
+    len = approvals.length;
+    for (uint256 i; i < len; i++) {
+      address token = approvals[i];
+      if (approvalsByToken[token] > 0) {
+        IERC20(token).safeIncreaseAllowance(address(factory), approvalsByToken[token]);
+        approvalsByToken[token] = 0;
+      }
+    }
+    delete approvals;
+  }
+
+  function setBorrowingVaults() internal {
+    bytes memory raw = vm.parseJson(configJson, ".borrowing-vaults");
+    VaultConfig[] memory vaults = abi.decode(raw, (VaultConfig[]));
+
+    uint256 len = vaults.length;
+    BorrowingVault vault;
+    string memory name;
+    uint256 liqRatio;
+    uint256 maxLtv;
+    for (uint256 i; i < len; i++) {
+      name = vaults[i].name;
+      liqRatio = vaults[i].liqRatio;
+      maxLtv = vaults[i].maxLtv;
+
+      try vm.readFile(string.concat("deployments/", chainName, "/", name)) {
+        vault = BorrowingVault(payable(getAddress(name)));
+
+        if (address(vault.oracle()) == address(0)) {
+          console.log(string.concat("Setting oracle for ", name, "..."));
+          timelockTargets.push(address(vault));
+          timelockDatas.push(abi.encodeWithSelector(vault.setOracle.selector, address(oracle)));
+          timelockValues.push(0);
+        }
+        if (vault.maxLtv() != maxLtv || vault.liqRatio() != liqRatio) {
+          console.log(string.concat("Setting ltv factors for ", name, "..."));
+          timelockTargets.push(address(vault));
+          timelockDatas.push(abi.encodeWithSelector(vault.setLtvFactors.selector, maxLtv, liqRatio));
+          timelockValues.push(0);
+        }
+      } catch {
+        console.log(string.concat("Needs to be deployed before setting: ", name));
+      }
+      console.log("==============");
+    }
+    callBatchWithTimelock();
+  }
+
+  function getConstructorArgs(string memory name) internal view {
+    IVault v = IVault(getAddress(name));
+    console.log(address(v));
+    bytes memory initCall = abi.encodeWithSignature(
+      "initialize(address,address,address,string,string,address[])",
+      v.asset(),
+      v.debtAsset(),
+      address(chief),
+      v.name(),
+      v.symbol(),
+      v.getProviders()
+    );
+    bytes memory constructorArgs = abi.encode(address(factory), initCall, address(chief));
+    console.log(constructorArgs);
+  }
+
+  function verifyContract(string memory contractName, bytes memory constructorArgs) internal {
+    string[] memory script = new string[](12);
+
+    string memory contractAddr = vm.toString(getAddress(contractName));
+
+    script[0] = "forge";
+    script[1] = "verify-contract";
+    script[2] = "--chain-id";
+    script[3] = vm.toString(block.chainid);
+    script[4] = "--num-of-optimizations";
+    script[5] = "200";
+    script[6] = "--constructor-args";
+    script[7] = vm.toString(constructorArgs);
+    script[8] = contractAddr;
+    script[9] = contractName;
+    script[10] = "--etherscan-api-key";
+    script[11] = ETHERSCAN_API_KEY;
+
+    vm.ffi(script);
+    console.log(string.concat("Run verification for: ", contractName, "at", contractAddr));
+  }
+
+  function deployYieldVaults() internal {
+    bytes memory raw = vm.parseJson(configJson, ".yield-vaults");
+    YieldVaultConfig[] memory vaults = abi.decode(raw, (YieldVaultConfig[]));
+
+    uint256 len = vaults.length;
+    address asset;
+    string memory name;
+    uint256 rating;
+    string[] memory providerNames;
+
+    for (uint256 i; i < len; i++) {
+      asset = readAddrFromConfig(vaults[i].asset);
+      name = vaults[i].name;
+      rating = vaults[i].rating;
+      providerNames = vaults[i].providers;
+
+      uint256 providersLen = providerNames.length;
+      ILendingProvider[] memory providers = new ILendingProvider[](providersLen);
+      for (uint256 j; j < providersLen; j++) {
+        providers[j] = ILendingProvider(getAddress(providerNames[j]));
+      }
+
+      try vm.readFile(string.concat("deployments/", chainName, "/", name)) {
+        console.log(string.concat("Skip deploying: ", name));
+      } catch {
+        if (IERC20(asset).allowance(msg.sender, address(yieldFactory)) < MIN_INITIALIZE) {
+          console.log(string.concat("Needs to increase allowance to deploy vault: ", name, " ..."));
+          if (approvalsByToken[asset] == 0) approvals.push(asset);
+          approvalsByToken[asset] += MIN_INITIALIZE;
+        } else {
+          console.log(string.concat("Deploying: ", name, " ..."));
+          uint256 count = yieldFactory.vaultsCount(asset);
+          chief.deployVault(address(yieldFactory), abi.encode(asset, providers), rating);
+          address vault = yieldFactory.allVaults(yieldFactory.vaultsCount(asset) - 1);
+          saveAddress(name, vault);
+        }
+      }
+    }
+    {
+      len = approvals.length;
+      for (uint256 i; i < len; i++) {
+        address token = approvals[i];
+        if (approvalsByToken[token] > 0) {
+          IERC20(token).safeIncreaseAllowance(address(yieldFactory), approvalsByToken[token]);
+          approvalsByToken[token] = 0;
+        }
+      }
+      delete approvals;
+    }
+  }
+
+  function setOrDeployFlasherBalance(bool deploy) internal {
+    if (deploy) {
+      flasherBalancer = new FlasherBalancer(readAddrFromConfig("Balancer"));
+      saveAddress("FlasherBalancer", address(flasherBalancer));
+    } else {
+      flasherBalancer = FlasherBalancer(getAddress("FlasherBalancer"));
+    }
+  }
+
+  function setOrDeployRebalancer(bool deploy) internal {
+    if (deploy) {
+      rebalancer = new RebalancerManager(address(chief));
+      saveAddress("RebalancerManager", address(rebalancer));
+    } else {
+      rebalancer = RebalancerManager(getAddress("RebalancerManager"));
+    }
+
+    if (!chief.hasRole(REBALANCER_ROLE, address(rebalancer))) {
+      timelockTargets.push(address(chief));
+      timelockDatas.push(
+        abi.encodeWithSelector(chief.grantRole.selector, REBALANCER_ROLE, address(rebalancer))
+      );
+      timelockValues.push(0);
+    }
+
+    if (!rebalancer.allowedExecutor(deployer)) {
+      timelockTargets.push(address(rebalancer));
+      timelockDatas.push(abi.encodeWithSelector(rebalancer.allowExecutor.selector, deployer, true));
+      timelockValues.push(0);
+    }
+
+    if (!chief.allowedFlasher(address(flasherBalancer))) {
+      timelockTargets.push(address(chief));
+      timelockDatas.push(
+        abi.encodeWithSelector(chief.allowFlasher.selector, address(flasherBalancer), true)
+      );
+      timelockValues.push(0);
+    }
+    callBatchWithTimelock();
+  }
+
+  function setOrDeployAaveEModeHelper(bool deploy) internal {
+    if (deploy) {
+      emode = new AaveEModeHelper(address(chief));
+      saveAddress("AaveEModeHelper", address(emode));
+    } else {
+      emode = AaveEModeHelper(getAddress("AaveEModeHelper"));
+    }
+    _checkAndSetEModeConfigs(".aavev3-emodes");
+  }
+
+  function setOrDeploySparkEModeHelper(bool deploy) internal {
+    if (deploy) {
+      emode = new AaveEModeHelper(address(chief));
+      saveAddress("SparkEModeHelper", address(emode));
+    } else {
+      emode = AaveEModeHelper(getAddress("SparkEModeHelper"));
+    }
+    _checkAndSetEModeConfigs(".spark-emodes");
+  }
+
+  function _checkAndSetEModeConfigs(string memory jsonEmodeObjName) private {
+    _resetEModeStorage();
+    bytes memory raw = vm.parseJson(configJson, jsonEmodeObjName);
+    EModeConfigJson[] memory config = abi.decode(raw, (EModeConfigJson[]));
+
+    uint256 len = config.length;
+    for (uint256 i = 0; i < len; i++) {
+      address asset = readAddrFromConfig(config[i].asset);
+      address debtAsset = readAddrFromConfig(config[i].debtAsset);
+      uint8 id = config[i].id;
+
+      uint8 currentId = emode.getEModeConfigIds(asset, debtAsset);
+
+      if (id != currentId) {
+        _eModeConfigsToSet.assets.push(asset);
+        _eModeConfigsToSet.debtAssets.push(debtAsset);
+        _eModeConfigsToSet.ids.push(id);
+      }
+    }
+
+    if (_eModeConfigsToSet.assets.length > 0) {
+      bytes memory data = abi.encodeWithSelector(
+        AaveEModeHelper.setEModeConfig.selector,
+        _eModeConfigsToSet.assets,
+        _eModeConfigsToSet.debtAssets,
+        _eModeConfigsToSet.ids
+      );
+      callWithTimelock(address(emode), data);
+    }
+  }
+
+  function _resetEModeStorage() private {
+    delete _eModeConfigsToSet;
+  }
+
+  function upgradeBorrowingImpl(bool deploy) internal {
+    if (deploy) {
+      if (!UPGRADE_SAFETY_CHECK_BYPASS) {
+        checkStorageLayoutCompatibility("BorrowingVaultUpgradeable");
+      } else {
+        console.log("Skipping upgradeability safety checks...");
+      }
+
+      implmentation = address(new BorrowingVault());
+      saveAddress("BorrowingVaultUpgradeable", implementation);
+      saveStorageLayout("BorrowingVaultUpgradeable");
+    } else {
+      implementation = getAddress("BorrowingVaultUpgradeable");
+    }
+
+    if (factory.implmentation() != implementation && address(0) != implementation) {
+      bytes memory data = abi.encodeWithSelector(factory.upgradeTo.selector, implementation);
+      callWithTimelock(address(factory), data);
+    }
+  }
+
+  function checkStorageLayoutCompatibility(string memory contractName) internal {
+    string memory oldLayoutPath = getStorageLayoutPath(contractName);
+  }
+}

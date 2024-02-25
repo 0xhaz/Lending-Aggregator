@@ -7,9 +7,10 @@ pragma solidity 0.8.15;
  * @dev Deployments of new vaults are done through this contract that also stores the addresses of all deployed vaults
  */
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {TimelockController} from
+  "openzeppelin-contracts/contracts/governance/TimelockController.sol";
+import {Address} from "openzeppelin-contracts/contracts/utils/Address.sol";
 import {CoreRoles} from "./access/CoreRoles.sol";
 import {IChief} from "./interfaces/IChief.sol";
 import {AddrMapper} from "./helpers/AddrMapper.sol";

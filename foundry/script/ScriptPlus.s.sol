@@ -5,10 +5,12 @@ import "forge-std/Script.sol";
 import "forge-std/console.sol";
 
 import {ScriptUtilities} from "./ScriptUtilities.s.sol";
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {TimelockController} from
+  "openzeppelin-contracts/contracts/governance/TimelockController.sol";
+import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from
+  "openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IWETH9} from "../src/abstracts/WETH9.sol";
 import {IConnext} from "../src/interfaces/connext/IConnext.sol";
 import {IVault} from "../src/interfaces/IVault.sol";
@@ -187,7 +189,7 @@ contract ScriptPlus is ScriptUtilities, CoreRoles {
         addrs[i] = readAddrFromConfig(list[i].asset);
         feeds[i] = list[i].chainlink;
       }
-      oracle = new FujiOracle(getAddress("FujiOracle"));
+      oracle = FujiOracle(getAddress("FujiOracle"));
       address asset;
       address feed;
       //   set new feeds
@@ -434,7 +436,7 @@ contract ScriptPlus is ScriptUtilities, CoreRoles {
       v.getProviders()
     );
     bytes memory constructorArgs = abi.encode(address(factory), initCall, address(chief));
-    console.log(constructorArgs);
+    console.logBytes(constructorArgs);
   }
 
   function verifyContract(string memory contractName, bytes memory constructorArgs) internal {
@@ -614,14 +616,14 @@ contract ScriptPlus is ScriptUtilities, CoreRoles {
         console.log("Skipping upgradeability safety checks...");
       }
 
-      implmentation = address(new BorrowingVault());
+      implementation = address(new BorrowingVault());
       saveAddress("BorrowingVaultUpgradeable", implementation);
       saveStorageLayout("BorrowingVaultUpgradeable");
     } else {
       implementation = getAddress("BorrowingVaultUpgradeable");
     }
 
-    if (factory.implmentation() != implementation && address(0) != implementation) {
+    if (factory.implementation() != implementation && address(0) != implementation) {
       bytes memory data = abi.encodeWithSelector(factory.upgradeTo.selector, implementation);
       callWithTimelock(address(factory), data);
     }
@@ -629,5 +631,221 @@ contract ScriptPlus is ScriptUtilities, CoreRoles {
 
   function checkStorageLayoutCompatibility(string memory contractName) internal {
     string memory oldLayoutPath = getStorageLayoutPath(contractName);
+    string memory tempName = string.concat("New", contractName);
+    string memory newLayoutPath = getStorageLayoutPath(tempName);
+    saveStorageLayoutAt(contractName, newLayoutPath);
+
+    string[] memory script = new string[](8);
+
+    script[0] = "diff";
+    script[1] = "-ayw";
+    script[2] = "-W";
+    script[3] = "180";
+    script[4] = "--side-by-side";
+    script[5] = "--suppress-common-lines";
+    script[6] = oldLayoutPath;
+    script[7] = newLayoutPath;
+
+    bytes memory diff = vm.ffi(script);
+
+    if (diff.length == 0) {
+      console.log("Storage layout compatibility check: Pass.");
+    } else {
+      console.log("Storage layout compatibility check: Fail");
+      console.log("\n%s Diff:", contractName);
+      console.log(string(diff));
+
+      console.log(
+        "\nIf you believe the storage layout is compatible, add the following `UPGRADE_SAFETY_CHECK_BYPASS=true` before  `forge script ...`"
+      );
+
+      vm.removeFile(newLayoutPath);
+      revert("Contract storage layout changed and might not be compatible.");
+    }
+  }
+
+  function upgradeBorrowingBeacon() internal {
+    bytes32 _BEACON_SLOT = 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50;
+    bytes memory raw = vm.parseJson(configJson, ".borrowing-vaults");
+    VaultConfig[] memory vaults = abi.decode(raw, (VaultConfig[]));
+
+    uint256 len = vaults.length;
+    string memory name;
+    address vault;
+    bytes32 storageSlot;
+    address beacon;
+    for (uint256 i; i < len; i++) {
+      name = vaults[i].name;
+      vault = getAddress(name);
+      storageSlot = vm.load(vault, _BEACON_SLOT);
+      beacon = abi.decode(abi.encode(storageSlot), (address));
+
+      if (beacon != address(factory)) {
+        console.log(string.concat("Setting new beacon for ", name, "..."));
+        timelockTargets.push(vault);
+        timelockDatas.push(
+          abi.encodeWithSelector(
+            VaultBeaconProxy(payable(vault)).upgradeBeaconAndCall.selector,
+            address(factory),
+            "",
+            false
+          )
+        );
+        timelockValues.push(0);
+      }
+    }
+    callBatchWithTimelock();
+  }
+
+  function rebalanceVault(
+    string memory vaultName,
+    ILendingProvider from,
+    ILendingProvider to
+  )
+    internal
+  {
+    address vault = getAddress(vaultName);
+
+    // leave a small amount if there's any debt left
+    uint256 assets = from.getDepositBalance(vault, IVault(vault)) - 0.001 ether;
+    uint256 debt = from.getBorrowBalance(vault, IVault(vault));
+    console.log(string.concat("Rebalancing: ", vaultName));
+    console.log(assets);
+    console.log(debt);
+
+    rebalancer.rebalanceVault(IVault(vault), assets, debt, from, to, flasherBalancer, true);
+  }
+
+  function rebalanceBorrowingVaults() internal {
+    bytes memory raw = vm.parseJson(configJson, ".borrowing-vaults");
+    VaultConfig[] memory vaults = abi.decode(raw, (VaultConfig[]));
+
+    uint256 len = vaults.length;
+
+    for (uint256 i; i < len; i++) {
+      string memory name = vaults[i].name;
+      address vault = getAddress(name);
+      string[] memory providerNames = vaults[i].providers;
+
+      ILendingProvider activeProvider = IVault(vault).activeProvider();
+      ILendingProvider to;
+
+      uint256 currentRate = ILendingProvider(activeProvider).getBorrowRateFor(IVault(vault));
+
+      uint256 providersLen = providerNames.length;
+      ILendingProvider[] memory providers = new ILendingProvider[](providersLen);
+      for (uint256 j; j < providersLen; j++) {
+        providers[j] = ILendingProvider(getAddress(providerNames[j]));
+        if (activeProvider != providers[j]) {
+          uint256 rate = providers[j].getBorrowRateFor(IVault(vault));
+          if (rate < currentRate) {
+            to = providers[j];
+          }
+        }
+      }
+
+      if (address(to) != address(0)) {
+        uint256 assets = activeProvider.getDepositBalance(vault, IVault(vault)) - 0.0001 ether;
+        uint256 debt = activeProvider.getBorrowBalance(vault, IVault(vault));
+        console.log(
+          string.concat(
+            "Rebalancing: ", name, " for ", vm.toString(assets), " and ", vm.toString(debt)
+          )
+        );
+
+        rebalancer.rebalanceVault(
+          IVault(vault), assets, debt, activeProvider, to, flasherBalancer, true
+        );
+      } else {
+        console.log(string.concat("Skip rebalancing: ", name));
+      }
+    }
+  }
+
+  function rebalanceYieldVaults() internal {
+    bytes memory raw = vm.parseJson(configJson, ".yield-vaults");
+    YieldVaultConfig[] memory vaults = abi.decode(raw, (YieldVaultConfig[]));
+
+    uint256 len = vaults.length;
+
+    for (uint256 i; i < len; i++) {
+      string memory name = vaults[i].name;
+      address vault = getAddress(name);
+      string[] memory providerNames = vaults[i].providers;
+
+      ILendingProvider activeProvider = IVault(vault).activeProvider();
+      ILendingProvider to;
+
+      uint256 currentRate = ILendingProvider(activeProvider).getDepositRateFor(IVault(vault));
+
+      uint256 providersLen = providerNames.length;
+      ILendingProvider[] memory providers = new ILendingProvider[](providersLen);
+      for (uint256 j; j < providersLen; j++) {
+        providers[j] = ILendingProvider(getAddress(providerNames[j]));
+        if (activeProvider != providers[j]) {
+          uint256 rate = providers[j].getDepositRateFor(IVault(vault));
+          if (rate > currentRate) {
+            to = providers[j];
+          }
+        }
+      }
+
+      if (address(to) != address(0)) {
+        uint256 assets = activeProvider.getDepositBalance(vault, IVault(vault));
+        console.log(string.concat("Rebalancing: ", name, " for ", vm.toString(assets)));
+
+        rebalancer.rebalanceVault(
+          IVault(vault), assets, 0, activeProvider, to, flasherBalancer, false
+        );
+      } else {
+        console.log(string.concat("Skip rebalancing: ", name));
+      }
+    }
+  }
+
+  function setVaultNewRating(string memory vaultName, uint256 rating) internal {
+    bytes memory callData =
+      abi.encodeWithSelector(chief.setSafetyRating.selector, getAddress(vaultName), rating);
+    callWithTimelock(address(chief), callData);
+  }
+
+  function callWithTimelock(address target, bytes memory callData) internal {
+    bytes32 hash = timelock.hashOperation(target, 0, callData, 0x00, 0x00);
+
+    if (timelock.isOperationReady(hash) && timelock.isOperationPending(hash)) {
+      console.log("Execute:");
+      timelock.execute(target, 0, callData, 0x00, 0x00);
+    } else if (!timelock.isOperation(hash) && !timelock.isOperationDone(hash)) {
+      console.log("Schedule:");
+      timelock.schedule(target, 0, callData, 0x00, 0x00, 3 seconds);
+    } else {
+      console.log("Already scheduled and executed:");
+    }
+    console.logBytes32(hash);
+    console.log("=================");
+  }
+
+  function callBatchWithTimelock() internal {
+    if (timelockTargets.length == 0) return;
+
+    bytes32 hash =
+      timelock.hashOperationBatch(timelockTargets, timelockValues, timelockDatas, 0x00, 0x00);
+
+    if (timelock.isOperationReady(hash) && timelock.isOperationPending(hash)) {
+      console.log("Execute batch:");
+      timelock.executeBatch(timelockTargets, timelockValues, timelockDatas, 0x00, 0x00);
+    } else if (!timelock.isOperation(hash) && !timelock.isOperationDone(hash)) {
+      console.log("Schedule batch:");
+      timelock.scheduleBatch(timelockTargets, timelockValues, timelockDatas, 0x00, 0x00, 3 seconds);
+    } else {
+      console.log("Already scheduled and executed:");
+    }
+    console.logBytes32(hash);
+    console.log("=================");
+
+    // clear storage
+    delete timelockTargets;
+    delete timelockDatas;
+    delete timelockValues;
   }
 }

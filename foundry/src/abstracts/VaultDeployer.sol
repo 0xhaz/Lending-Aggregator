@@ -63,6 +63,15 @@ abstract contract VaultDeployer {
   //////////////////////// FUNCTIONS ////////////////////////
 
   /**
+   * @notice Returns the historic number of vaults of an `asset` type
+   * deployed by this deployer
+   * @param asset address
+   */
+  function vaultsCount(address asset) external view returns (uint256 count) {
+    count = vaultsByAsset[asset].length;
+  }
+
+  /**
    * @notice Returns an array of vaults based on their `asset` type
    * @param asset address
    * @param startIndex number to start loop in vaults[] array
